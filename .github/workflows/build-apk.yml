@@ -1,0 +1,109 @@
+
+name: JULIET AI Android APK Build
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build JULIET AI
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout Source
+        uses: actions/checkout@v5
+
+      - name: Set Up Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Set Up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.6.0'
+
+      - name: Set Up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK
+        shell: bash
+        run: |
+          sdkmanager --install \
+            "platform-tools" \
+            "platforms;android-37" \
+            "build-tools;37.0.0"
+          yes | sdkmanager --licenses || true
+
+      - name: Find Android Project
+        id: project
+        shell: bash
+        run: |
+          ROOT=""
+
+          for FILE in settings.gradle.kts settings.gradle; do
+            if [ -f "$FILE" ]; then
+              ROOT="."
+              break
+            fi
+          done
+
+          if [ -z "$ROOT" ]; then
+            for DIR in */; do
+              for FILE in settings.gradle.kts settings.gradle; do
+                if [ -f "${DIR}${FILE}" ]; then
+                  ROOT="${DIR%/}"
+                  break 2
+                fi
+              done
+            done
+          fi
+
+          if [ -z "$ROOT" ]; then
+            echo "::error::No Gradle Android project found."
+            echo "Check that settings.gradle or settings.gradle.kts is committed."
+            find . -maxdepth 3 -type f | head -200
+            exit 1
+          fi
+
+          echo "Project root: $ROOT"
+          echo "root=$ROOT" >> "$GITHUB_OUTPUT"
+
+      - name: Build Debug APK
+        shell: bash
+        run: |
+          set -o pipefail
+          gradle \
+            -p "${{ steps.project.outputs.root }}" \
+            assembleDebug \
+            --no-daemon \
+            --stacktrace \
+            --warning-mode all \
+            2>&1 | tee build.log
+
+      - name: Upload APK
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: JULIET-AI-Debug-APK
+          path: |
+            **/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload Build Log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: JULIET-AI-Build-Log
+          path: build.log
+          if-no-files-found: ignore
+          retention-days: 7
