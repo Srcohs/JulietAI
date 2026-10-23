@@ -56,7 +56,7 @@ jobs:
           SDKMANAGER: ${{ steps.sdk.outputs.manager }}
         run: |
           set -o pipefail
-          yes | "$SDKMANAGER" --sdk_root="$ANDROID_HOME" --licenses
+          "$SDKMANAGER" --sdk_root="$ANDROID_HOME" --licenses < /dev/null
 
       - name: Install Android SDK Packages
         shell: bash
