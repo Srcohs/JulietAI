@@ -1,0 +1,135 @@
+
+name: JULIET AI Android APK Build
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build JULIET AI
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+
+    env:
+      ANDROID_HOME: /usr/local/lib/android/sdk
+      ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
+
+    steps:
+      - name: Checkout Source
+        uses: actions/checkout@v5
+
+      - name: Set Up Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Set Up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.7'
+
+      - name: Locate Android SDK Manager
+        id: sdk
+        shell: bash
+        run: |
+          SDKMANAGER=$(find "$ANDROID_HOME/cmdline-tools" \
+            -type f -name sdkmanager 2>/dev/null | head -1)
+
+          if [ -z "$SDKMANAGER" ]; then
+            echo "::error::Android SDK manager not found."
+            exit 1
+          fi
+
+          echo "manager=$SDKMANAGER" >> "$GITHUB_OUTPUT"
+          echo "Found SDK manager: $SDKMANAGER"
+
+      - name: Accept Android SDK Licenses
+        shell: bash
+        env:
+          SDKMANAGER: ${{ steps.sdk.outputs.manager }}
+        run: |
+          set -o pipefail
+          yes | "$SDKMANAGER" --sdk_root="$ANDROID_HOME" --licenses
+
+      - name: Install Android SDK Packages
+        shell: bash
+        env:
+          SDKMANAGER: ${{ steps.sdk.outputs.manager }}
+        run: |
+          "$SDKMANAGER" --sdk_root="$ANDROID_HOME" --install \
+            "platform-tools" \
+            "platforms;android-35" \
+            "build-tools;35.0.0"
+
+      - name: Locate Android Project
+        id: project
+        shell: bash
+        run: |
+          ROOT=""
+
+          if [ -f settings.gradle ] || \
+             [ -f settings.gradle.kts ]; then
+            ROOT="."
+          else
+            FILE=$(find . -maxdepth 5 -type f \
+              \( -name settings.gradle \
+              -o -name settings.gradle.kts \) \
+              -print -quit)
+
+            if [ -n "$FILE" ]; then
+              ROOT=$(dirname "$FILE")
+            fi
+          fi
+
+          if [ -z "$ROOT" ]; then
+            echo "::error::Gradle settings file not found."
+            find . -maxdepth 4 -type f | head -200
+            exit 1
+          fi
+
+          echo "root=$ROOT" >> "$GITHUB_OUTPUT"
+
+      - name: Build Debug APK
+        id: build
+        shell: bash
+        env:
+          PROJECT_ROOT: ${{ steps.project.outputs.root }}
+        run: |
+          set -o pipefail
+
+          if [ -f "$PROJECT_ROOT/gradlew" ] && \
+             [ -f "$PROJECT_ROOT/gradle/wrapper/gradle-wrapper.jar" ]; then
+            chmod +x "$PROJECT_ROOT/gradlew"
+            "$PROJECT_ROOT/gradlew" \
+              -p "$PROJECT_ROOT" assembleDebug \
+              --no-daemon --stacktrace 2>&1 | tee build.log
+          else
+            gradle -p "$PROJECT_ROOT" assembleDebug \
+              --no-daemon --stacktrace 2>&1 | tee build.log
+          fi
+
+      - name: Upload Debug APK
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: JULIET-AI-Debug-APK
+          path: '**/build/outputs/apk/debug/*.apk'
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload Build Log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: JULIET-AI-Build-Log
+          path: build.log
+          if-no-files-found: ignore
+          retention-days: 7
+          
